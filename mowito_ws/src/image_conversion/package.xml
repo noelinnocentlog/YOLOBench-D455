@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>image_conversion</name>
+  <version>0.1.0</version>
+  <description>A ROS 2 package for image conversion (grayscale and color modes)</description>
+
+  <maintainer email="noelinnocent369@gmail.com">Noel Innocent J</maintainer>
+
+  <license>Apache-2.0</license>
+
+  <!-- Build tool dependency -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Dependencies -->
+  <build_export_depend>rclcpp</build_export_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+  <build_export_depend>cv_bridge</build_export_depend>
+  <build_export_depend>image_transport</build_export_depend>
+  <build_export_depend>std_srvs</build_export_depend>
+  <build_export_depend>OpenCV</build_export_depend>
+
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>OpenCV</exec_depend>
+
+  <test_depend>ament_cmake</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+
