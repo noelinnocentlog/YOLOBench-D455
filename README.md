@@ -64,8 +64,8 @@ Check that the nodes are running and publishing topics:
 
 You should see:
 
-    /camera/image_raw - Published by usb_cam.
-    /camera/image_converted - Published by image_conversion.
+/camera/image_raw - Published by usb_cam.
+/camera/image_converted - Published by image_conversion.
 
 ### Testing the Functionality
 
