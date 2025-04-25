@@ -8,3 +8,10 @@
 /install/
 /log/
 
+# Ignore Python bytecode files
+*.pyc
+__pycache__/
+
+# Ignore IDE/editor-specific files
+.vscode/
+.idea/
