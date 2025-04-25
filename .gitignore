@@ -1,3 +1,6 @@
+/src/realsense-ros-d455/
+/src/librealsense-d455/
+/src/yolo_ros/
 /build/
 /install/
 /log/
@@ -6,6 +9,3 @@ __pycache__/
 *.swp
 .vscode/
 .idea/
-/src/realsense-ros-d455/
-/src/librealsense-d455/
-/src/yolo_ros/
