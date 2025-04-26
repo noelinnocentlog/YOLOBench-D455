@@ -4,7 +4,7 @@
   <name>yolo_depth_overlay</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="msd030428@gmail.com">parallels</maintainer>
+  <maintainer email="noelinnocent369@gmail.com">noel innocent</maintainer>
   <license>TODO: License declaration</license>
 
   <test_depend>ament_copyright</test_depend>
