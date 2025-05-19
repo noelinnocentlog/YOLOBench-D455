@@ -1,0 +1,40 @@
+depth_tracking_node:
+  ros__parameters:
+    # Depth parameters
+    min_depth: 0.1
+    max_depth: 10.0
+    depth_method: "median"  # Options: "median", "mean", "min"
+    roi_scale: 0.5  # Scale factor for ROI relative to bounding box
+    
+    # Tracking parameters
+    tracking_history: 20  # Number of frames to keep for tracking
+    max_tracking_age: 1.0  # Max seconds before dropping track
+    iou_threshold: 0.3  # IoU threshold for matching
+    
+    # Risk calculation parameters  
+    risk_depth_weight: 0.6  # Weight for depth in risk calculation
+    risk_velocity_weight: 0.15  # Weight for velocity in risk calculation
+    risk_class_weight: 0.15  # Weight for class priority in risk calculation
+    risk_size_weight: 0.1  # Weight for object size in risk calculation
+    
+    # Distance zone thresholds (in meters)
+    red_zone_threshold: 1.5  # Objects closer than this are in red zone
+    yellow_zone_threshold: 3.0  # Objects closer than this are in yellow zone
+    
+    # Performance optimization
+    use_multi_threading: true  # Use multi-threading for better performance
+    use_tracking_only_mode: true  # Continue tracking between detections
+    detection_timeout: 0.3  # Max seconds to wait for detection before tracking-only mode
+    
+    # Topics
+    rgb_topic: "/camera/camera/color/image_raw"
+    depth_topic: "/camera/camera/depth/image_rect_raw"
+    detection_topic: "/yolo/detections"
+    camera_info_topic: "/camera/camera/depth/camera_info"
+    output_topic: "/yolo/depth_tracking_image"
+    
+    # Visualization
+    publish_markers: true  # Publish visualization markers for RViz
+    
+    # Debug options
+    debug_level: 1  # 0=minimal, 1=normal, 2=verbose
