@@ -1,5 +1,18 @@
-# File: yolo.launch.py
-#!/usr/bin/env python3
+# Copyright (C) 2023 Miguel Ángel González Santamarta
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 
 from launch import LaunchDescription, LaunchContext
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -10,17 +23,17 @@ from launch.conditions import IfCondition
 
 def generate_launch_description():
 
-    def run_yolo(context, use_tracking, use_3d):
+    def run_yolo(context: LaunchContext, use_tracking, use_3d):
 
         use_tracking = eval(context.perform_substitution(use_tracking))
         use_3d = eval(context.perform_substitution(use_3d))
 
-        # YOLO Model Parameters
-        model_version = LaunchConfiguration("model_version")
-        model_version_cmd = DeclareLaunchArgument(
-            "model_version",
-            default_value="yolov8",
-            description="YOLO version to use: yolov5, yolov6, yolov7, yolov8",
+        model_type = LaunchConfiguration("model_type")
+        model_type_cmd = DeclareLaunchArgument(
+            "model_type",
+            default_value="YOLO",
+            choices=["YOLO", "World"],
+            description="Model type form Ultralytics (YOLO, World)",
         )
 
         model = LaunchConfiguration("model")
@@ -37,7 +50,6 @@ def generate_launch_description():
             description="Tracker name or path",
         )
 
-        # Hardware/Performance Parameters
         device = LaunchConfiguration("device")
         device_cmd = DeclareLaunchArgument(
             "device",
@@ -45,14 +57,6 @@ def generate_launch_description():
             description="Device to use (GPU/CPU)",
         )
 
-        half = LaunchConfiguration("half")
-        half_cmd = DeclareLaunchArgument(
-            "half",
-            default_value="True",
-            description="Use half-precision (FP16) inference for better performance on Jetson",
-        )
-
-        # Image Parameters
         yolo_encoding = LaunchConfiguration("yolo_encoding")
         yolo_encoding_cmd = DeclareLaunchArgument(
             "yolo_encoding",
@@ -84,7 +88,7 @@ def generate_launch_description():
         imgsz_height = LaunchConfiguration("imgsz_height")
         imgsz_height_cmd = DeclareLaunchArgument(
             "imgsz_height",
-            default_value="480",  # Reduced from 640 for better Jetson performance
+            default_value="480",
             description="Image height for inference",
         )
 
@@ -95,10 +99,17 @@ def generate_launch_description():
             description="Image width for inference",
         )
 
+        half = LaunchConfiguration("half")
+        half_cmd = DeclareLaunchArgument(
+            "half",
+            default_value="False",
+            description="Whether to enable half-precision (FP16) inference speeding up model inference with minimal impact on accuracy",
+        )
+
         max_det = LaunchConfiguration("max_det")
         max_det_cmd = DeclareLaunchArgument(
             "max_det",
-            default_value="100",  # Reduced from 300 for Jetson performance
+            default_value="300",
             description="Maximum number of detections allowed per image",
         )
 
@@ -106,27 +117,27 @@ def generate_launch_description():
         augment_cmd = DeclareLaunchArgument(
             "augment",
             default_value="False",
-            description="Whether to enable test-time augmentation (TTA) for predictions",
+            description="Whether to enable test-time augmentation (TTA) for predictions improving detection robustness at the cost of speed",
         )
 
         agnostic_nms = LaunchConfiguration("agnostic_nms")
         agnostic_nms_cmd = DeclareLaunchArgument(
             "agnostic_nms",
             default_value="False",
-            description="Whether to enable class-agnostic Non-Maximum Suppression (NMS)",
+            description="Whether to enable class-agnostic Non-Maximum Suppression (NMS) merging overlapping boxes of different classes",
         )
 
         retina_masks = LaunchConfiguration("retina_masks")
         retina_masks_cmd = DeclareLaunchArgument(
             "retina_masks",
             default_value="False",
-            description="Whether to use high-resolution segmentation masks if available",
+            description="Whether to use high-resolution segmentation masks if available in the model, enhancing mask quality for segmentation",
         )
 
         input_image_topic = LaunchConfiguration("input_image_topic")
         input_image_topic_cmd = DeclareLaunchArgument(
             "input_image_topic",
-            default_value="/camera/color/image_raw",
+            default_value="/camera/rgb/image_raw",
             description="Name of the input image topic",
         )
 
@@ -135,13 +146,13 @@ def generate_launch_description():
             "image_reliability",
             default_value="1",
             choices=["0", "1", "2"],
-            description="QoS reliability for image topic (0=default, 1=Reliable, 2=Best Effort)",
+            description="Specific reliability QoS of the input image topic (0=system default, 1=Reliable, 2=Best Effort)",
         )
 
         input_depth_topic = LaunchConfiguration("input_depth_topic")
         input_depth_topic_cmd = DeclareLaunchArgument(
             "input_depth_topic",
-            default_value="/camera/depth/image_rect_raw",
+            default_value="/camera/depth/image_raw",
             description="Name of the input depth topic",
         )
 
@@ -150,7 +161,7 @@ def generate_launch_description():
             "depth_image_reliability",
             default_value="1",
             choices=["0", "1", "2"],
-            description="QoS reliability for depth image topic (0=default, 1=Reliable, 2=Best Effort)",
+            description="Specific reliability QoS of the input depth image topic (0=system default, 1=Reliable, 2=Best Effort)",
         )
 
         input_depth_info_topic = LaunchConfiguration("input_depth_info_topic")
@@ -158,6 +169,35 @@ def generate_launch_description():
             "input_depth_info_topic",
             default_value="/camera/depth/camera_info",
             description="Name of the input depth info topic",
+        )
+
+        depth_info_reliability = LaunchConfiguration("depth_info_reliability")
+        depth_info_reliability_cmd = DeclareLaunchArgument(
+            "depth_info_reliability",
+            default_value="1",
+            choices=["0", "1", "2"],
+            description="Specific reliability QoS of the input depth info topic (0=system default, 1=Reliable, 2=Best Effort)",
+        )
+
+        target_frame = LaunchConfiguration("target_frame")
+        target_frame_cmd = DeclareLaunchArgument(
+            "target_frame",
+            default_value="base_link",
+            description="Target frame to transform the 3D boxes",
+        )
+
+        depth_image_units_divisor = LaunchConfiguration("depth_image_units_divisor")
+        depth_image_units_divisor_cmd = DeclareLaunchArgument(
+            "depth_image_units_divisor",
+            default_value="1000",
+            description="Divisor used to convert the raw depth image values into metres",
+        )
+
+        maximum_detection_threshold = LaunchConfiguration("maximum_detection_threshold")
+        maximum_detection_threshold_cmd = DeclareLaunchArgument(
+            "maximum_detection_threshold",
+            default_value="0.3",
+            description="Maximum detection threshold in the z axis",
         )
 
         namespace = LaunchConfiguration("namespace")
@@ -174,7 +214,7 @@ def generate_launch_description():
             description="Whether to activate the debug node",
         )
 
-        # Get topics for remap
+        # get topics for remap
         detect_3d_detections_topic = "detections"
         debug_detections_topic = "detections"
 
@@ -193,7 +233,7 @@ def generate_launch_description():
             namespace=namespace,
             parameters=[
                 {
-                    "model_version": model_version,
+                    "model_type": model_type,
                     "model": model,
                     "device": device,
                     "yolo_encoding": yolo_encoding,
@@ -230,9 +270,11 @@ def generate_launch_description():
             namespace=namespace,
             parameters=[
                 {
-                    "depth_image_units_divisor": 1000,
+                    "target_frame": target_frame,
+                    "maximum_detection_threshold": maximum_detection_threshold,
+                    "depth_image_units_divisor": depth_image_units_divisor,
                     "depth_image_reliability": depth_image_reliability,
-                    "depth_info_reliability": depth_image_reliability,
+                    "depth_info_reliability": depth_info_reliability,
                 }
             ],
             remappings=[
@@ -257,7 +299,7 @@ def generate_launch_description():
         )
 
         return (
-            model_version_cmd,
+            model_type_cmd,
             model_cmd,
             tracker_cmd,
             device_cmd,
@@ -277,6 +319,10 @@ def generate_launch_description():
             input_depth_topic_cmd,
             depth_image_reliability_cmd,
             input_depth_info_topic_cmd,
+            depth_info_reliability_cmd,
+            target_frame_cmd,
+            depth_image_units_divisor_cmd,
+            maximum_detection_threshold_cmd,
             namespace_cmd,
             use_debug_cmd,
             yolo_node_cmd,

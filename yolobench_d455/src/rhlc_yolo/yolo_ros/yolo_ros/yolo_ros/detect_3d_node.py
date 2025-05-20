@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright (C) 2023 Miguel Ángel González Santamarta
 
 # This program is free software: you can redistribute it and/or modify
@@ -18,7 +16,7 @@
 
 import cv2
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 import rclpy
 from rclpy.qos import QoSProfile
@@ -26,9 +24,8 @@ from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.lifecycle import LifecycleNode
-# ROS 2 Foxy compatible imports
 from rclpy.lifecycle import TransitionCallbackReturn
-from rclpy.lifecycle.node import LifecycleState  # Changed path for Foxy
+from rclpy.lifecycle import LifecycleState
 
 import message_filters
 from cv_bridge import CvBridge
@@ -62,13 +59,6 @@ class Detect3DNode(LifecycleNode):
         # aux
         self.tf_buffer = Buffer()
         self.cv_bridge = CvBridge()
-        
-        # Initialize attributes used in on_deactivate
-        self.depth_sub = None
-        self.depth_info_sub = None
-        self.detections_sub = None
-        self._synchronizer = None
-        self.tf_listener = None
 
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Configuring...")
@@ -148,19 +138,11 @@ class Detect3DNode(LifecycleNode):
     def on_deactivate(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Deactivating...")
 
-        # Check subscribers before destroying
-        if self.depth_sub and hasattr(self.depth_sub, 'sub'):
-            self.destroy_subscription(self.depth_sub.sub)
-            
-        if self.depth_info_sub and hasattr(self.depth_info_sub, 'sub'):
-            self.destroy_subscription(self.depth_info_sub.sub)
-            
-        if self.detections_sub and hasattr(self.detections_sub, 'sub'):
-            self.destroy_subscription(self.detections_sub.sub)
+        self.destroy_subscription(self.depth_sub.sub)
+        self.destroy_subscription(self.depth_info_sub.sub)
+        self.destroy_subscription(self.detections_sub.sub)
 
-        if self._synchronizer:
-            del self._synchronizer
-            self._synchronizer = None
+        del self._synchronizer
 
         super().on_deactivate(state)
         self.get_logger().info(f"[{self.get_name()}] Deactivated")
@@ -170,17 +152,12 @@ class Detect3DNode(LifecycleNode):
     def on_cleanup(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Cleaning up...")
 
-        if self.tf_listener:
-            del self.tf_listener
-            self.tf_listener = None
+        del self.tf_listener
 
-        if hasattr(self, '_pub'):
-            self.destroy_publisher(self._pub)
+        self.destroy_publisher(self._pub)
 
         super().on_cleanup(state)
         self.get_logger().info(f"[{self.get_name()}] Cleaned up")
-        
-        return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Shutting down...")
@@ -194,7 +171,7 @@ class Detect3DNode(LifecycleNode):
         depth_info_msg: CameraInfo,
         detections_msg: DetectionArray,
     ) -> None:
-        """Process detections with depth data."""
+
         new_detections_msg = DetectionArray()
         new_detections_msg.header = detections_msg.header
         new_detections_msg.detections = self.process_detections(
@@ -208,7 +185,7 @@ class Detect3DNode(LifecycleNode):
         depth_info_msg: CameraInfo,
         detections_msg: DetectionArray,
     ) -> List[Detection]:
-        """Process detections to add 3D information."""
+
         # check if there are detections
         if not detections_msg.detections:
             return []
@@ -250,14 +227,14 @@ class Detect3DNode(LifecycleNode):
         depth_image: np.ndarray,
         depth_info: CameraInfo,
         detection: Detection,
-    ) -> Optional[BoundingBox3D]:
-        """Convert 2D bounding box to 3D using depth data."""
+    ) -> BoundingBox3D:
+
         center_x = int(detection.bbox.center.position.x)
         center_y = int(detection.bbox.center.position.y)
         size_x = int(detection.bbox.size.x)
         size_y = int(detection.bbox.size.y)
 
-        if hasattr(detection, 'mask') and detection.mask.data:
+        if detection.mask.data:
             # crop depth image by mask
             mask_array = np.array(
                 [[int(ele.x), int(ele.y)] for ele in detection.mask.data]
@@ -280,7 +257,7 @@ class Detect3DNode(LifecycleNode):
             return None
 
         # find the z coordinate on the 3D BB
-        if hasattr(detection, 'mask') and detection.mask.data:
+        if detection.mask.data:
             roi = roi[roi > 0]
             bb_center_z_coord = np.median(roi)
 
@@ -326,7 +303,7 @@ class Detect3DNode(LifecycleNode):
         depth_info: CameraInfo,
         detection: Detection,
     ) -> KeyPoint3DArray:
-        """Convert 2D keypoints to 3D using depth data."""
+
         # build an array of 2d keypoints
         keypoints_2d = np.array(
             [[p.point.x, p.point.y] for p in detection.keypoints.data], dtype=np.int16
@@ -358,8 +335,7 @@ class Detect3DNode(LifecycleNode):
 
         return msg_array
 
-    def get_transform(self, frame_id: str) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """Get transform between frames."""
+    def get_transform(self, frame_id: str) -> Tuple[np.ndarray]:
         # transform position from image frame to target_frame
         rotation = None
         translation = None
@@ -398,7 +374,7 @@ class Detect3DNode(LifecycleNode):
         translation: np.ndarray,
         rotation: np.ndarray,
     ) -> BoundingBox3D:
-        """Transform 3D box from one frame to another."""
+
         # position
         position = (
             Detect3DNode.qv_mult(
@@ -435,7 +411,7 @@ class Detect3DNode(LifecycleNode):
         translation: np.ndarray,
         rotation: np.ndarray,
     ) -> KeyPoint3DArray:
-        """Transform 3D keypoints from one frame to another."""
+
         for point in keypoints.data:
             position = (
                 Detect3DNode.qv_mult(
@@ -452,7 +428,6 @@ class Detect3DNode(LifecycleNode):
 
     @staticmethod
     def qv_mult(q: np.ndarray, v: np.ndarray) -> np.ndarray:
-        """Multiply quaternion and vector."""
         q = np.array(q, dtype=np.float64)
         v = np.array(v, dtype=np.float64)
         qvec = q[1:]

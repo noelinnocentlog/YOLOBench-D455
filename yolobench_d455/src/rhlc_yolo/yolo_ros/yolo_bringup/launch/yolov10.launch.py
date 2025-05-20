@@ -1,4 +1,4 @@
-# Copyright (C) 2024 Miguel Ángel González Santamarta
+# Copyright (C) 2023 Miguel Ángel González Santamarta
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "model": LaunchConfiguration("model", default="yolov5mu.pt"),
+                    "model": LaunchConfiguration("model", default="yolov10m.pt"),
                     "tracker": LaunchConfiguration("tracker", default="bytetrack.yaml"),
                     "device": LaunchConfiguration("device", default="cpu"),
                     "enable": LaunchConfiguration("enable", default="True"),

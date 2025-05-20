@@ -1,43 +1,31 @@
-# File: yolov8.launch.py
-#!/usr/bin/env python3
+# Copyright (C) 2023 Miguel Ángel González Santamarta
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 
 import os
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
+
     return LaunchDescription(
         [
-            # Declare arguments with default values
-            DeclareLaunchArgument(
-                'model',
-                default_value='yolov8m.pt',
-                description='YOLOv8 model path'
-            ),
-            
-            DeclareLaunchArgument(
-                'device', 
-                default_value='cuda:0',
-                description='Device to run inference on (cuda:0 or cpu)'
-            ),
-            
-            DeclareLaunchArgument(
-                'threshold',
-                default_value='0.5',
-                description='Detection confidence threshold'
-            ),
-            
-            DeclareLaunchArgument(
-                'input_image_topic',
-                default_value='/camera/color/image_raw',
-                description='Input image topic'
-            ),
-            
-            # Include the base launch file
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(
@@ -47,18 +35,18 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "model_version": "yolov8",
-                    "model": LaunchConfiguration("model"),
-                    "tracker": "bytetrack.yaml",
-                    "device": LaunchConfiguration("device"),
-                    "enable": "True",
-                    "half": "True",  # Use half precision for Jetson
-                    "imgsz_height": "640",
-                    "imgsz_width": "640",
-                    "threshold": LaunchConfiguration("threshold"),
-                    "input_image_topic": LaunchConfiguration("input_image_topic"),
-                    "image_reliability": "1",
-                    "namespace": "yolo",
+                    "model": LaunchConfiguration("model", default="yolov8m.pt"),
+                    "tracker": LaunchConfiguration("tracker", default="bytetrack.yaml"),
+                    "device": LaunchConfiguration("device", default="cpu"),
+                    "enable": LaunchConfiguration("enable", default="True"),
+                    "threshold": LaunchConfiguration("threshold", default="0.5"),
+                    "input_image_topic": LaunchConfiguration(
+                        "input_image_topic", default="/camera/camera/color/image_raw"
+                    ),
+                    "image_reliability": LaunchConfiguration(
+                        "image_reliability", default="1"
+                    ),
+                    "namespace": LaunchConfiguration("namespace", default="yolo"),
                 }.items(),
             )
         ]

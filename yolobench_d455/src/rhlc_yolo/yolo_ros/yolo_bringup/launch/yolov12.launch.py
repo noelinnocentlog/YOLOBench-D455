@@ -35,7 +35,7 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "model": LaunchConfiguration("model", default="yolov5mu.pt"),
+                    "model": LaunchConfiguration("model", default="yolo12m.pt"),
                     "tracker": LaunchConfiguration("tracker", default="bytetrack.yaml"),
                     "device": LaunchConfiguration("device", default="cpu"),
                     "enable": LaunchConfiguration("enable", default="True"),
