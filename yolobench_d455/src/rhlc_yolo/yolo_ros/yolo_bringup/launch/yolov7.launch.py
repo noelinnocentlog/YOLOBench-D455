@@ -1,10 +1,10 @@
-# File: yolov5.launch.py
+# File: yolov7.launch.py
 #!/usr/bin/env python3
 
 import os
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import IncludeLaunchArgument, DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 
@@ -15,8 +15,8 @@ def generate_launch_description():
             # Declare arguments with default values
             DeclareLaunchArgument(
                 'model',
-                default_value='yolov5m.pt',
-                description='YOLOv5 model path'
+                default_value='yolov7.pt',
+                description='YOLOv7 model path'
             ),
             
             DeclareLaunchArgument(
@@ -47,12 +47,14 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "model_version": "yolov5",
+                    "model_version": "yolov7",
                     "model": LaunchConfiguration("model"),
                     "tracker": "bytetrack.yaml",
                     "device": LaunchConfiguration("device"),
                     "enable": "True",
                     "half": "True",  # Use half precision for Jetson
+                    "imgsz_height": "640",  # Good balance for Jetson
+                    "imgsz_width": "640",
                     "threshold": LaunchConfiguration("threshold"),
                     "input_image_topic": LaunchConfiguration("input_image_topic"),
                     "image_reliability": "1",

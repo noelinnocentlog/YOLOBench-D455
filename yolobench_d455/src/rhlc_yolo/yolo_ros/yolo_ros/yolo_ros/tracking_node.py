@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (C) 2023 Miguel Ángel González Santamarta
 
 # This program is free software: you can redistribute it and/or modify
@@ -20,19 +22,31 @@ from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.lifecycle import LifecycleNode
+# ROS 2 Foxy compatible imports
 from rclpy.lifecycle import TransitionCallbackReturn
-from rclpy.lifecycle import LifecycleState
+from rclpy.lifecycle.node import LifecycleState  # Changed path for Foxy
 
 import cv2
 import numpy as np
 import message_filters
 from cv_bridge import CvBridge
 
-from ultralytics.engine.results import Boxes
-from ultralytics.trackers.basetrack import BaseTrack
-from ultralytics.trackers import BOTSORT, BYTETracker
-from ultralytics.utils import IterableSimpleNamespace, yaml_load
-from ultralytics.utils.checks import check_requirements, check_yaml
+# Import with error handling for compatibility
+try:
+    from ultralytics.engine.results import Boxes
+    from ultralytics.trackers.basetrack import BaseTrack
+    from ultralytics.trackers import BOTSORT, BYTETracker
+    from ultralytics.utils import IterableSimpleNamespace, yaml_load
+    from ultralytics.utils.checks import check_requirements, check_yaml
+except ImportError:
+    print("Installing required packages...")
+    import os
+    os.system("pip install ultralytics lap")
+    from ultralytics.engine.results import Boxes
+    from ultralytics.trackers.basetrack import BaseTrack
+    from ultralytics.trackers import BOTSORT, BYTETracker
+    from ultralytics.utils import IterableSimpleNamespace, yaml_load
+    from ultralytics.utils.checks import check_requirements, check_yaml
 
 from sensor_msgs.msg import Image
 from yolo_msgs.msg import Detection
@@ -49,6 +63,11 @@ class TrackingNode(LifecycleNode):
         self.declare_parameter("image_reliability", QoSReliabilityPolicy.BEST_EFFORT)
 
         self.cv_bridge = CvBridge()
+        
+        # Initialize attributes used in on_deactivate
+        self.image_sub = None
+        self.detections_sub = None
+        self._synchronizer = None
 
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Configuring...")
@@ -78,15 +97,15 @@ class TrackingNode(LifecycleNode):
         )
 
         # subs
-        image_sub = message_filters.Subscriber(
+        self.image_sub = message_filters.Subscriber(
             self, Image, "image_raw", qos_profile=image_qos_profile
         )
-        detections_sub = message_filters.Subscriber(
+        self.detections_sub = message_filters.Subscriber(
             self, DetectionArray, "detections", qos_profile=10
         )
 
         self._synchronizer = message_filters.ApproximateTimeSynchronizer(
-            (image_sub, detections_sub), 10, 0.5
+            (self.image_sub, self.detections_sub), 10, 0.5
         )
         self._synchronizer.registerCallback(self.detections_cb)
 
@@ -98,11 +117,16 @@ class TrackingNode(LifecycleNode):
     def on_deactivate(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Deactivating...")
 
-        self.destroy_subscription(self.image_sub.sub)
-        self.destroy_subscription(self.detections_sub.sub)
+        # Check if subscribers exist before destroying them
+        if self.image_sub and hasattr(self.image_sub, 'sub'):
+            self.destroy_subscription(self.image_sub.sub)
+            
+        if self.detections_sub and hasattr(self.detections_sub, 'sub'):
+            self.destroy_subscription(self.detections_sub.sub)
 
-        del self._synchronizer
-        self._synchronizer = None
+        if self._synchronizer:
+            del self._synchronizer
+            self._synchronizer = None
 
         super().on_deactivate(state)
         self.get_logger().info(f"[{self.get_name()}] Deactivated")
@@ -112,7 +136,8 @@ class TrackingNode(LifecycleNode):
     def on_cleanup(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Cleaning up...")
 
-        del self.tracker
+        if hasattr(self, 'tracker'):
+            del self.tracker
 
         super().on_cleanup(state)
         self.get_logger().info(f"[{self.get_name()}] Cleaned up")
@@ -126,7 +151,7 @@ class TrackingNode(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def create_tracker(self, tracker_yaml: str) -> BaseTrack:
-
+        """Create object tracker from YAML config."""
         TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT}
         check_requirements("lap")  # for linear_assignment
 
@@ -141,7 +166,7 @@ class TrackingNode(LifecycleNode):
         return tracker
 
     def detections_cb(self, img_msg: Image, detections_msg: DetectionArray) -> None:
-
+        """Process detections and perform tracking."""
         tracked_detections_msg = DetectionArray()
         tracked_detections_msg.header = img_msg.header
 
@@ -153,7 +178,6 @@ class TrackingNode(LifecycleNode):
         detection_list = []
         detection: Detection
         for detection in detections_msg.detections:
-
             detection_list.append(
                 [
                     detection.bbox.center.position.x - detection.bbox.size.x / 2,
@@ -167,32 +191,37 @@ class TrackingNode(LifecycleNode):
 
         # tracking
         if len(detection_list) > 0:
+            try:
+                det = Boxes(np.array(detection_list), (img_msg.height, img_msg.width))
+                tracks = self.tracker.update(det, cv_image)
 
-            det = Boxes(np.array(detection_list), (img_msg.height, img_msg.width))
-            tracks = self.tracker.update(det, cv_image)
+                if len(tracks) > 0:
+                    for t in tracks:
+                        # Get tracked box
+                        tracked_box = Boxes(t[:-1], (img_msg.height, img_msg.width))
+                        t_idx = int(t[-1])
+                        
+                        # Check if index is valid
+                        if t_idx < len(detections_msg.detections):
+                            tracked_detection: Detection = detections_msg.detections[t_idx]
 
-            if len(tracks) > 0:
+                            # get boxes values
+                            box = tracked_box.xywh[0]
+                            tracked_detection.bbox.center.position.x = float(box[0])
+                            tracked_detection.bbox.center.position.y = float(box[1])
+                            tracked_detection.bbox.size.x = float(box[2])
+                            tracked_detection.bbox.size.y = float(box[3])
 
-                for t in tracks:
+                            # get track id
+                            track_id = ""
+                            if hasattr(tracked_box, 'is_track') and tracked_box.is_track:
+                                track_id = str(int(tracked_box.id))
+                            tracked_detection.id = track_id
 
-                    tracked_box = Boxes(t[:-1], (img_msg.height, img_msg.width))
-                    tracked_detection: Detection = detections_msg.detections[int(t[-1])]
-
-                    # get boxes values
-                    box = tracked_box.xywh[0]
-                    tracked_detection.bbox.center.position.x = float(box[0])
-                    tracked_detection.bbox.center.position.y = float(box[1])
-                    tracked_detection.bbox.size.x = float(box[2])
-                    tracked_detection.bbox.size.y = float(box[3])
-
-                    # get track id
-                    track_id = ""
-                    if tracked_box.is_track:
-                        track_id = str(int(tracked_box.id))
-                    tracked_detection.id = track_id
-
-                    # append msg
-                    tracked_detections_msg.detections.append(tracked_detection)
+                            # append msg
+                            tracked_detections_msg.detections.append(tracked_detection)
+            except Exception as e:
+                self.get_logger().error(f"Error in tracking: {str(e)}")
 
         # publish detections
         self._pub.publish(tracked_detections_msg)

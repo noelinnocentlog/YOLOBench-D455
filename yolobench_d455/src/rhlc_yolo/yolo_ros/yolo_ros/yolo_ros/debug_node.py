@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (C) 2023 Miguel Ángel González Santamarta
 
 # This program is free software: you can redistribute it and/or modify
@@ -17,7 +19,7 @@
 import cv2
 import random
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 
 import rclpy
 from rclpy.duration import Duration
@@ -26,12 +28,21 @@ from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.lifecycle import LifecycleNode
+# ROS 2 Foxy compatible imports
 from rclpy.lifecycle import TransitionCallbackReturn
-from rclpy.lifecycle import LifecycleState
+from rclpy.lifecycle.node import LifecycleState  # Changed path for Foxy
 
 import message_filters
 from cv_bridge import CvBridge
-from ultralytics.utils.plotting import Annotator, colors
+
+# Import with error handling for compatibility
+try:
+    from ultralytics.utils.plotting import Annotator, colors
+except ImportError:
+    print("Installing required packages...")
+    import os
+    os.system("pip install ultralytics")
+    from ultralytics.utils.plotting import Annotator, colors
 
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker
@@ -53,6 +64,11 @@ class DebugNode(LifecycleNode):
 
         # params
         self.declare_parameter("image_reliability", QoSReliabilityPolicy.BEST_EFFORT)
+        
+        # Initialize attributes used in on_deactivate
+        self.image_sub = None
+        self.detections_sub = None
+        self._synchronizer = None
 
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Configuring...")
@@ -100,10 +116,16 @@ class DebugNode(LifecycleNode):
     def on_deactivate(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Deactivating...")
 
-        self.destroy_subscription(self.image_sub.sub)
-        self.destroy_subscription(self.detections_sub.sub)
+        # Check subscribers before destroying
+        if self.image_sub and hasattr(self.image_sub, 'sub'):
+            self.destroy_subscription(self.image_sub.sub)
+            
+        if self.detections_sub and hasattr(self.detections_sub, 'sub'):
+            self.destroy_subscription(self.detections_sub.sub)
 
-        del self._synchronizer
+        if self._synchronizer:
+            del self._synchronizer
+            self._synchronizer = None
 
         super().on_deactivate(state)
         self.get_logger().info(f"[{self.get_name()}] Deactivated")
@@ -113,9 +135,14 @@ class DebugNode(LifecycleNode):
     def on_cleanup(self, state: LifecycleState) -> TransitionCallbackReturn:
         self.get_logger().info(f"[{self.get_name()}] Cleaning up...")
 
-        self.destroy_publisher(self._dbg_pub)
-        self.destroy_publisher(self._bb_markers_pub)
-        self.destroy_publisher(self._kp_markers_pub)
+        if hasattr(self, '_dbg_pub'):
+            self.destroy_publisher(self._dbg_pub)
+            
+        if hasattr(self, '_bb_markers_pub'):
+            self.destroy_publisher(self._bb_markers_pub)
+            
+        if hasattr(self, '_kp_markers_pub'):
+            self.destroy_publisher(self._kp_markers_pub)
 
         super().on_cleanup(state)
         self.get_logger().info(f"[{self.get_name()}] Cleaned up")
@@ -134,7 +161,7 @@ class DebugNode(LifecycleNode):
         detection: Detection,
         color: Tuple[int],
     ) -> np.ndarray:
-
+        """Draw bounding box for detection."""
         # get detection info
         class_name = detection.class_name
         score = detection.score
@@ -192,7 +219,11 @@ class DebugNode(LifecycleNode):
         detection: Detection,
         color: Tuple[int],
     ) -> np.ndarray:
-
+        """Draw segmentation mask for detection."""
+        # Check if mask exists
+        if not hasattr(detection, 'mask') or not detection.mask.data:
+            return cv_image
+            
         mask_msg = detection.mask
         mask_array = np.array([[int(ele.x), int(ele.y)] for ele in mask_msg.data])
 
@@ -211,62 +242,73 @@ class DebugNode(LifecycleNode):
         return cv_image
 
     def draw_keypoints(self, cv_image: np.ndarray, detection: Detection) -> np.ndarray:
-
+        """Draw keypoints for detection."""
+        # Check if keypoints exist
+        if not hasattr(detection, 'keypoints') or not detection.keypoints.data:
+            return cv_image
+            
         keypoints_msg = detection.keypoints
 
-        ann = Annotator(cv_image)
+        try:
+            ann = Annotator(cv_image)
 
-        kp: KeyPoint2D
-        for kp in keypoints_msg.data:
-            color_k = (
-                [int(x) for x in ann.kpt_color[kp.id - 1]]
-                if len(keypoints_msg.data) == 17
-                else colors(kp.id - 1)
-            )
-
-            cv2.circle(
-                cv_image,
-                (int(kp.point.x), int(kp.point.y)),
-                5,
-                color_k,
-                -1,
-                lineType=cv2.LINE_AA,
-            )
-            cv2.putText(
-                cv_image,
-                str(kp.id),
-                (int(kp.point.x), int(kp.point.y)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                color_k,
-                1,
-                cv2.LINE_AA,
-            )
-
-        def get_pk_pose(kp_id: int) -> Tuple[int]:
+            kp: KeyPoint2D
             for kp in keypoints_msg.data:
-                if kp.id == kp_id:
-                    return (int(kp.point.x), int(kp.point.y))
-            return None
-
-        for i, sk in enumerate(ann.skeleton):
-            kp1_pos = get_pk_pose(sk[0])
-            kp2_pos = get_pk_pose(sk[1])
-
-            if kp1_pos is not None and kp2_pos is not None:
-                cv2.line(
-                    cv_image,
-                    kp1_pos,
-                    kp2_pos,
-                    [int(x) for x in ann.limb_color[i]],
-                    thickness=2,
-                    lineType=cv2.LINE_AA,
+                color_k = (
+                    [int(x) for x in ann.kpt_color[kp.id - 1]]
+                    if len(keypoints_msg.data) == 17
+                    else colors(kp.id - 1)
                 )
 
+                cv2.circle(
+                    cv_image,
+                    (int(kp.point.x), int(kp.point.y)),
+                    5,
+                    color_k,
+                    -1,
+                    lineType=cv2.LINE_AA,
+                )
+                cv2.putText(
+                    cv_image,
+                    str(kp.id),
+                    (int(kp.point.x), int(kp.point.y)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    color_k,
+                    1,
+                    cv2.LINE_AA,
+                )
+
+            def get_pk_pose(kp_id: int) -> Optional[Tuple[int, int]]:
+                for kp in keypoints_msg.data:
+                    if kp.id == kp_id:
+                        return (int(kp.point.x), int(kp.point.y))
+                return None
+
+            for i, sk in enumerate(ann.skeleton):
+                kp1_pos = get_pk_pose(sk[0])
+                kp2_pos = get_pk_pose(sk[1])
+
+                if kp1_pos is not None and kp2_pos is not None:
+                    cv2.line(
+                        cv_image,
+                        kp1_pos,
+                        kp2_pos,
+                        [int(x) for x in ann.limb_color[i]],
+                        thickness=2,
+                        lineType=cv2.LINE_AA,
+                    )
+        except Exception as e:
+            self.get_logger().warn(f"Error drawing keypoints: {str(e)}")
+            
         return cv_image
 
     def create_bb_marker(self, detection: Detection, color: Tuple[int]) -> Marker:
-
+        """Create 3D bounding box marker."""
+        # Check if 3D box exists
+        if not hasattr(detection, 'bbox3d') or not detection.bbox3d.frame_id:
+            return None
+            
         bbox3d = detection.bbox3d
 
         marker = Marker()
@@ -294,13 +336,15 @@ class DebugNode(LifecycleNode):
         marker.color.b = color[2] / 255.0
         marker.color.a = 0.4
 
-        marker.lifetime = Duration(seconds=0.5).to_msg()
+        # Create duration for Foxy compatibility
+        duration_msg = Duration(seconds=0, nanoseconds=500000000).to_msg()
+        marker.lifetime = duration_msg
         marker.text = detection.class_name
 
         return marker
 
     def create_kp_marker(self, keypoint: KeyPoint3D) -> Marker:
-
+        """Create 3D keypoint marker."""
         marker = Marker()
 
         marker.ns = "yolo_3d"
@@ -325,54 +369,63 @@ class DebugNode(LifecycleNode):
         marker.color.b = keypoint.score * 255.0
         marker.color.a = 0.4
 
-        marker.lifetime = Duration(seconds=0.5).to_msg()
+        # Create duration for Foxy compatibility
+        duration_msg = Duration(seconds=0, nanoseconds=500000000).to_msg()
+        marker.lifetime = duration_msg
         marker.text = str(keypoint.id)
 
         return marker
 
     def detections_cb(self, img_msg: Image, detection_msg: DetectionArray) -> None:
-        cv_image = self.cv_bridge.imgmsg_to_cv2(img_msg, desired_encoding="bgr8")
-        bb_marker_array = MarkerArray()
-        kp_marker_array = MarkerArray()
+        """Process detections and create visualization."""
+        try:
+            cv_image = self.cv_bridge.imgmsg_to_cv2(img_msg, desired_encoding="bgr8")
+            bb_marker_array = MarkerArray()
+            kp_marker_array = MarkerArray()
 
-        detection: Detection
-        for detection in detection_msg.detections:
+            detection: Detection
+            for detection in detection_msg.detections:
+                # random color
+                class_name = detection.class_name
 
-            # random color
-            class_name = detection.class_name
+                if class_name not in self._class_to_color:
+                    r = random.randint(0, 255)
+                    g = random.randint(0, 255)
+                    b = random.randint(0, 255)
+                    self._class_to_color[class_name] = (r, g, b)
 
-            if class_name not in self._class_to_color:
-                r = random.randint(0, 255)
-                g = random.randint(0, 255)
-                b = random.randint(0, 255)
-                self._class_to_color[class_name] = (r, g, b)
+                color = self._class_to_color[class_name]
 
-            color = self._class_to_color[class_name]
+                cv_image = self.draw_box(cv_image, detection, color)
+                cv_image = self.draw_mask(cv_image, detection, color)
+                cv_image = self.draw_keypoints(cv_image, detection)
 
-            cv_image = self.draw_box(cv_image, detection, color)
-            cv_image = self.draw_mask(cv_image, detection, color)
-            cv_image = self.draw_keypoints(cv_image, detection)
+                # Check if 3D box exists
+                if hasattr(detection, 'bbox3d') and detection.bbox3d.frame_id:
+                    marker = self.create_bb_marker(detection, color)
+                    if marker:
+                        marker.header.stamp = img_msg.header.stamp
+                        marker.id = len(bb_marker_array.markers)
+                        bb_marker_array.markers.append(marker)
 
-            if detection.bbox3d.frame_id:
-                marker = self.create_bb_marker(detection, color)
-                marker.header.stamp = img_msg.header.stamp
-                marker.id = len(bb_marker_array.markers)
-                bb_marker_array.markers.append(marker)
+                # Check if 3D keypoints exist
+                if hasattr(detection, 'keypoints3d') and detection.keypoints3d.frame_id:
+                    for kp in detection.keypoints3d.data:
+                        marker = self.create_kp_marker(kp)
+                        marker.header.frame_id = detection.keypoints3d.frame_id
+                        marker.header.stamp = img_msg.header.stamp
+                        marker.id = len(kp_marker_array.markers)
+                        kp_marker_array.markers.append(marker)
 
-            if detection.keypoints3d.frame_id:
-                for kp in detection.keypoints3d.data:
-                    marker = self.create_kp_marker(kp)
-                    marker.header.frame_id = detection.keypoints3d.frame_id
-                    marker.header.stamp = img_msg.header.stamp
-                    marker.id = len(kp_marker_array.markers)
-                    kp_marker_array.markers.append(marker)
-
-        # publish dbg image
-        self._dbg_pub.publish(
-            self.cv_bridge.cv2_to_imgmsg(cv_image, encoding="bgr8", header=img_msg.header)
-        )
-        self._bb_markers_pub.publish(bb_marker_array)
-        self._kp_markers_pub.publish(kp_marker_array)
+            # publish dbg image
+            self._dbg_pub.publish(
+                self.cv_bridge.cv2_to_imgmsg(cv_image, encoding="bgr8", header=img_msg.header)
+            )
+            self._bb_markers_pub.publish(bb_marker_array)
+            self._kp_markers_pub.publish(kp_marker_array)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error in detections_cb: {str(e)}")
 
 
 def main():

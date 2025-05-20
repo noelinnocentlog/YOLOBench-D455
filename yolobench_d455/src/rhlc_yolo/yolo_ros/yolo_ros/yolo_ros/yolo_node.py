@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (C) 2023 Miguel Ángel González Santamarta
 
 # This program is free software: you can redistribute it and/or modify
@@ -25,15 +27,27 @@ from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSDurabilityPolicy
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.lifecycle import LifecycleNode
+# ROS 2 Foxy compatible imports
 from rclpy.lifecycle import TransitionCallbackReturn
-from rclpy.lifecycle import LifecycleState
+from rclpy.lifecycle.node import LifecycleState  # Changed path for Foxy
 
 import torch
-from ultralytics import YOLO, YOLOWorld
+# Ultralytics imports with error handling
+try:
+    from ultralytics import YOLO, YOLOWorld
+except ImportError:
+    print("Warning: Ultralytics not installed, using pip to install...")
+    import os
+    os.system("pip install ultralytics")
+    from ultralytics import YOLO, YOLOWorld
+
 from ultralytics.engine.results import Results
 from ultralytics.engine.results import Boxes
 from ultralytics.engine.results import Masks
 from ultralytics.engine.results import Keypoints
+
+# Import adapters for YOLOv6 and YOLOv7
+from .adapters import YOLOv6, YOLOv7
 
 from std_srvs.srv import SetBool
 from sensor_msgs.msg import Image
@@ -70,7 +84,13 @@ class YoloNode(LifecycleNode):
         self.declare_parameter("agnostic_nms", False)
         self.declare_parameter("retina_masks", False)
 
-        self.type_to_model = {"YOLO": YOLO, "World": YOLOWorld}
+        # Extended type_to_model to include all YOLO versions
+        self.type_to_model = {
+            "YOLO": YOLO,           # YOLOv5/v8 from Ultralytics
+            "World": YOLOWorld,     # YOLOWorld from Ultralytics
+            "YOLOv6": YOLOv6,       # YOLOv6 adapter
+            "YOLOv7": YOLOv7        # YOLOv7 adapter
+        }
         
         # Detection timing tracking
         self.object_last_detection = {}
@@ -136,23 +156,38 @@ class YoloNode(LifecycleNode):
         self.get_logger().info(f"[{self.get_name()}] Activating...")
 
         try:
-            self.yolo = self.type_to_model[self.model_type](self.model)
+            # Load model using the appropriate handler based on model_type
+            model_class = self.type_to_model.get(self.model_type)
+            if model_class is None:
+                self.get_logger().error(f"Unsupported model type: {self.model_type}")
+                return TransitionCallbackReturn.ERROR
+                
+            self.yolo = model_class(self.model)
+            
+            # Log model information
+            self.get_logger().info(f"Loaded {self.model_type} model: {self.model}")
+            if hasattr(self.yolo, 'device'):
+                self.get_logger().info(f"Model device: {self.yolo.device}")
+            
         except FileNotFoundError:
-            self.get_logger().error(f"Model file '{self.model}' does not exists")
+            self.get_logger().error(f"Model file '{self.model}' does not exist")
+            return TransitionCallbackReturn.ERROR
+        except Exception as e:
+            self.get_logger().error(f"Error loading model: {str(e)}")
             return TransitionCallbackReturn.ERROR
 
         try:
             self.get_logger().info("Trying to fuse model...")
             self.yolo.fuse()
-        except TypeError as e:
-            self.get_logger().warn(f"Error while fuse: {e}")
+        except Exception as e:
+            self.get_logger().warn(f"Error while fuse: {str(e)}")
 
         self._enable_srv = self.create_service(SetBool, "enable", self.enable_cb)
 
-        if isinstance(self.yolo, YOLOWorld):
-            self._set_classes_srv = self.create_service(
-                SetClasses, "set_classes", self.set_classes_cb
-            )
+        # Create set_classes service for all models
+        self._set_classes_srv = self.create_service(
+            SetClasses, "set_classes", self.set_classes_cb
+        )
 
         self._sub = self.create_subscription(
             Image, "image_raw", self.image_cb, self.image_qos_profile
@@ -174,7 +209,7 @@ class YoloNode(LifecycleNode):
         self.destroy_service(self._enable_srv)
         self._enable_srv = None
 
-        if isinstance(self.yolo, YOLOWorld):
+        if hasattr(self, '_set_classes_srv') and self._set_classes_srv:
             self.destroy_service(self._set_classes_srv)
             self._set_classes_srv = None
 
@@ -240,9 +275,24 @@ class YoloNode(LifecycleNode):
         return self.detection_time_ms[unique_id]
 
     def parse_hypothesis(self, results: Results) -> List[Dict]:
-
+        """Parse detection hypothesis."""
         hypothesis_list = []
 
+        # Handle results differently based on model type
+        if self.model_type in ["YOLOv6", "YOLOv7"]:
+            # For adapter models, parse raw predictions
+            for i, detection in enumerate(results._pred):
+                if len(detection) >= 6:  # xmin, ymin, xmax, ymax, conf, cls
+                    cls_id = int(detection[5])
+                    hypothesis = {
+                        "class_id": cls_id,
+                        "class_name": self.yolo.names[cls_id],
+                        "score": float(detection[4]),
+                    }
+                    hypothesis_list.append(hypothesis)
+            return hypothesis_list
+        
+        # Standard Ultralytics format (YOLOv5/YOLOv8)
         if results.boxes:
             box_data: Boxes
             for box_data in results.boxes:
@@ -252,7 +302,6 @@ class YoloNode(LifecycleNode):
                     "score": float(box_data.conf),
                 }
                 hypothesis_list.append(hypothesis)
-
         elif results.obb:
             for i in range(results.obb.cls.shape[0]):
                 hypothesis = {
@@ -265,13 +314,39 @@ class YoloNode(LifecycleNode):
         return hypothesis_list
 
     def parse_boxes(self, results: Results) -> List[BoundingBox2D]:
-
+        """Parse bounding boxes."""
         boxes_list = []
 
+        # Handle results differently based on model type
+        if self.model_type in ["YOLOv6", "YOLOv7"]:
+            # For adapter models, parse raw predictions
+            for detection in results._pred:
+                if len(detection) >= 6:  # xmin, ymin, xmax, ymax, conf, cls
+                    msg = BoundingBox2D()
+                    
+                    # Get box in xyxy format
+                    x1, y1, x2, y2 = detection[:4]
+                    
+                    # Convert to center format (xywh)
+                    center_x = (x1 + x2) / 2
+                    center_y = (y1 + y2) / 2
+                    width = x2 - x1
+                    height = y2 - y1
+                    
+                    # Set message fields
+                    msg.center.position.x = float(center_x)
+                    msg.center.position.y = float(center_y)
+                    msg.center.theta = 0.0  # No rotation in YOLOv6/v7
+                    msg.size.x = float(width)
+                    msg.size.y = float(height)
+                    
+                    boxes_list.append(msg)
+            return boxes_list
+        
+        # Standard Ultralytics format (YOLOv5/YOLOv8)
         if results.boxes:
             box_data: Boxes
             for box_data in results.boxes:
-
                 msg = BoundingBox2D()
 
                 # get boxes values
@@ -283,7 +358,6 @@ class YoloNode(LifecycleNode):
 
                 # append msg
                 boxes_list.append(msg)
-
         elif results.obb:
             for i in range(results.obb.cls.shape[0]):
                 msg = BoundingBox2D()
@@ -302,8 +376,12 @@ class YoloNode(LifecycleNode):
         return boxes_list
 
     def parse_masks(self, results: Results) -> List[Mask]:
-
+        """Parse segmentation masks."""
         masks_list = []
+        
+        # YOLOv6/v7 don't typically return masks
+        if self.model_type in ["YOLOv6", "YOLOv7"]:
+            return masks_list
 
         def create_point2d(x: float, y: float) -> Point2D:
             p = Point2D()
@@ -313,7 +391,6 @@ class YoloNode(LifecycleNode):
 
         mask: Masks
         for mask in results.masks:
-
             msg = Mask()
 
             msg.data = [
@@ -328,19 +405,21 @@ class YoloNode(LifecycleNode):
         return masks_list
 
     def parse_keypoints(self, results: Results) -> List[KeyPoint2DArray]:
-
+        """Parse keypoints."""
         keypoints_list = []
+        
+        # YOLOv6/v7 don't typically return keypoints
+        if self.model_type in ["YOLOv6", "YOLOv7"]:
+            return keypoints_list
 
         points: Keypoints
         for points in results.keypoints:
-
             msg_array = KeyPoint2DArray()
 
             if points.conf is None:
                 continue
 
             for kp_id, (p, conf) in enumerate(zip(points.xy[0], points.conf[0])):
-
                 if conf >= self.threshold:
                     msg = KeyPoint2D()
 
@@ -360,10 +439,12 @@ class YoloNode(LifecycleNode):
             # Start timing the detection process
             start_time = time.time()
             
-            # convert image + predict
+            # Convert image
             cv_image = self.cv_bridge.imgmsg_to_cv2(
                 msg, desired_encoding=self.yolo_encoding
             )
+            
+            # Run prediction
             results = self.yolo.predict(
                 source=cv_image,
                 verbose=False,
@@ -378,48 +459,63 @@ class YoloNode(LifecycleNode):
                 retina_masks=self.retina_masks,
                 device=self.device,
             )
-            results: Results = results[0].cpu()
+            
+            # For Ultralytics models
+            if self.model_type in ["YOLO", "World"]:
+                results = results[0].cpu()
+            else:
+                # For adapter models, results format is already correct
+                results = results[0]
+            
+            # Check if we have any detections
+            hypothesis = self.parse_hypothesis(results)
+            boxes = self.parse_boxes(results)
+            
+            # Standard Ultralytics models may have masks and keypoints
+            masks = self.parse_masks(results) if hasattr(results, 'masks') and results.masks else []
+            keypoints = self.parse_keypoints(results) if hasattr(results, 'keypoints') and results.keypoints else []
 
-            if results.boxes or results.obb:
-                hypothesis = self.parse_hypothesis(results)
-                boxes = self.parse_boxes(results)
-
-            if results.masks:
-                masks = self.parse_masks(results)
-
-            if results.keypoints:
-                keypoints = self.parse_keypoints(results)
-
-            # create detection msgs
+            # Create detection msgs
             detections_msg = DetectionArray()
-
-            for i in range(len(results)):
+            
+            for i in range(len(hypothesis)):
                 aux_msg = Detection()
-
-                if results.boxes or results.obb and hypothesis and boxes:
-                    aux_msg.class_id = hypothesis[i]["class_id"]
-                    aux_msg.class_name = hypothesis[i]["class_name"]
-                    aux_msg.score = hypothesis[i]["score"]
+                
+                # Set detection fields
+                aux_msg.class_id = hypothesis[i]["class_id"]
+                aux_msg.class_name = hypothesis[i]["class_name"]
+                aux_msg.score = hypothesis[i]["score"]
+                
+                # Set bounding box if available
+                if i < len(boxes):
                     aux_msg.bbox = boxes[i]
-                    
-                    # Track detection time for this object
-                    detection_ms = self.get_detection_time(i, aux_msg.class_name)
-                    
-                    # Add detection time to the message
-                    aux_msg.detection_time_ms = int(detection_ms)
-
-                if results.masks and masks:
+                
+                # Track detection time for this object
+                detection_ms = self.get_detection_time(i, aux_msg.class_name)
+                aux_msg.detection_time_ms = int(detection_ms)
+                
+                # Set mask if available
+                if masks and i < len(masks):
                     aux_msg.mask = masks[i]
-
-                if results.keypoints and keypoints:
+                
+                # Set keypoints if available
+                if keypoints and i < len(keypoints):
                     aux_msg.keypoints = keypoints[i]
-
+                
                 detections_msg.detections.append(aux_msg)
-
-            # publish detections
+            
+            # Publish detections
             detections_msg.header = msg.header
             self._pub.publish(detections_msg)
-
+            
+            # Log performance
+            elapsed = time.time() - start_time
+            if hasattr(self, 'frame_count'):
+                self.frame_count += 1
+                if self.frame_count % 10 == 0:
+                    self.get_logger().info(f"Inference time: {elapsed*1000:.1f}ms ({1.0/elapsed:.1f} FPS)")
+            
+            # Clean up
             del results
             del cv_image
 
@@ -428,9 +524,17 @@ class YoloNode(LifecycleNode):
         req: SetClasses.Request,
         res: SetClasses.Response,
     ) -> SetClasses.Response:
+        """Set classes callback."""
         self.get_logger().info(f"Setting classes: {req.classes}")
-        self.yolo.set_classes(req.classes)
-        self.get_logger().info(f"New classes: {self.yolo.names}")
+        try:
+            # Set classes differently based on model type
+            if hasattr(self.yolo, "set_classes"):
+                self.yolo.set_classes(req.classes)
+                self.get_logger().info(f"Classes set successfully")
+            else:
+                self.get_logger().warn(f"Model doesn't support setting classes")
+        except Exception as e:
+            self.get_logger().error(f"Error setting classes: {str(e)}")
         return res
 
 

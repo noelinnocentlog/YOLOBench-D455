@@ -1,4 +1,4 @@
-# File: yolov5.launch.py
+# File: yolov6.launch.py
 #!/usr/bin/env python3
 
 import os
@@ -15,8 +15,8 @@ def generate_launch_description():
             # Declare arguments with default values
             DeclareLaunchArgument(
                 'model',
-                default_value='yolov5m.pt',
-                description='YOLOv5 model path'
+                default_value='yolov6m.pt',
+                description='YOLOv6 model path'
             ),
             
             DeclareLaunchArgument(
@@ -47,7 +47,7 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "model_version": "yolov5",
+                    "model_version": "yolov6",
                     "model": LaunchConfiguration("model"),
                     "tracker": "bytetrack.yaml",
                     "device": LaunchConfiguration("device"),
