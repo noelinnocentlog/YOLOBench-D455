@@ -1,20 +1,5 @@
-# Copyright (C) 2023  Miguel Ángel González Santamarta
-
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
 from typing import List, Dict
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -75,6 +60,9 @@ class YoloNode(Node):
         )
 
         self.cv_bridge = CvBridge()
+        # Detection timing tracking
+        self.object_last_detection = {}  # Track when objects were last detected
+        self.detection_time_ms = {}      # Store detection timing values
         self.yolo = YOLO(model)
         self.yolo.fuse()
 
@@ -100,6 +88,32 @@ class YoloNode(Node):
         self.enable = req.data
         res.success = True
         return res
+
+    def get_detection_time(self, obj_id, class_name):
+        """Get detection time in milliseconds"""
+        now = time.time() * 1000  # Current time in ms
+        unique_id = f"{class_name}_{obj_id}"
+        
+        if unique_id not in self.object_last_detection:
+            # First detection
+            self.object_last_detection[unique_id] = now
+            self.detection_time_ms[unique_id] = 0
+            return 0
+            
+        # Calculate time since last detection
+        time_diff = now - self.object_last_detection[unique_id]
+        
+        # If gap is significant (object was lost and now found)
+        if time_diff > 100:  # 100ms threshold for redetection
+            self.detection_time_ms[unique_id] = int(time_diff)
+        else:
+            # Continuous detection, no significant gap
+            self.detection_time_ms[unique_id] = 0
+            
+        # Update last detection time
+        self.object_last_detection[unique_id] = now
+        
+        return self.detection_time_ms[unique_id]
 
     def parse_hypothesis(self, results: Results) -> List[Dict]:
 
@@ -225,8 +239,10 @@ class YoloNode(Node):
                     aux_msg.class_id = hypothesis[i]["class_id"]
                     aux_msg.class_name = hypothesis[i]["class_name"]
                     aux_msg.score = hypothesis[i]["score"]
-
                     aux_msg.bbox = boxes[i]
+                    
+                    # Add detection timing to the message
+                    aux_msg.detection_time_ms = self.get_detection_time(i, aux_msg.class_name)
 
                 if results.masks:
                     aux_msg.mask = masks[i]
