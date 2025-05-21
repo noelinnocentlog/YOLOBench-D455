@@ -16,4 +16,4 @@ __pycache__/
 .vscode/
 .idea/
 .fake/
-.nt/
+.pt/

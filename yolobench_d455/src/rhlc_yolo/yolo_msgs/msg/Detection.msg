@@ -1,4 +1,5 @@
-# defines a YOLOv8 detection result
+# defines a YOLO detection result
+uint64 detection_time_ms  # Time in milliseconds when object was detected
 
 # class probability
 int32 class_id
