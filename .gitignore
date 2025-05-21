@@ -1,7 +1,6 @@
 # Ignore external dependencies
-/yolobench_d455/src/realsense-ros-d455/
-/yolobench_d455/src/librealsense-d455/
-#/yolobench_d455/src/yolo_ros/
+/yolo-bench-d455/src/realsense-ros-d455/
+/yolo-bench-d455/src/librealsense-d455/
 
 # Ignore build, install, and log directories
 /build/
